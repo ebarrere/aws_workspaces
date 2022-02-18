@@ -8,7 +8,7 @@ namespace: ebarrere
 name: aws_workspaces
 
 # The version of the collection. Must be compatible with semantic versioning
-version: 0.0.6
+version: 0.0.7
 
 # The path to the Markdown (.md) readme file. This path is relative to the root of the collection
 readme: README.md
@@ -43,16 +43,13 @@ tags: []
 dependencies: {'amazon.aws': '>=2.0.0'}
 
 # The URL of the originating SCM repository
-repository: http://example.com/repository
+repository: https://github.com/ebarrere/aws_workspaces
 
 # The URL to any online docs
-documentation: http://docs.example.com
-
-# The URL to the homepage of the collection/project
-homepage: http://example.com
+documentation: https://github.com/ebarrere/aws_workspaces/blob/master/README.md
 
 # The URL to the collection issue tracker
-issues: http://example.com/issue/tracker
+issues: https://github.com/ebarrere/aws_workspaces/issues
 
 # A list of file glob-like patterns used to filter any files or directories that should not be included in the build
 # artifact. A pattern is matched from the relative path of the file or directory of the collection directory. This
