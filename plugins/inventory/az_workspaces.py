@@ -7,8 +7,9 @@ __metaclass__ = type
 DOCUMENTATION = '''
     name: az_workspaces
     plugin_type: inventory
-    short_description: Workspaces inventory source
+    short_description: Amazon Workspaces inventory source
     requirements:
+        - amazon.aws
         - boto3
         - botocore
     extends_documentation_fragment:
@@ -23,7 +24,7 @@ DOCUMENTATION = '''
         - If no credentials are provided and the control node has an associated IAM workspace profile then the
           role will be used for authentication.
     author:
-        - Sloane Hertel (@s-hertel)
+        - Elliott Barrere
     options:
         plugin:
             description: Token that ensures this is a source file for the plugin.
@@ -38,40 +39,24 @@ DOCUMENTATION = '''
               - If empty (the default) default this will include all regions, except possibly restricted ones like us-gov-west-1 and cn-north-1.
           type: list
           default: []
+        filters:
+          description:
+              - A dictionary of filters.
+              - Available filters are listed here U(https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/workspaces.html#WorkSpaces.Client.describe_workspaces).
+              - ONLY ONE FILTER is allowed by the API. Order of precedence is directory_id, bundle_id.
+          type: dict
+          default: {}
         hostnames:
           description:
+              - TODO: NOT IMPLEMENTED
               - A list in order of precedence for hostname variables.
               - You can use the options specified in U(http://docs.aws.amazon.com/cli/latest/reference/workspaces/describe-workspaces.html#options).
               - To use tags as hostnames use the syntax tag:Name=Value to use the hostname Name_Value, or tag:Name to use the value of the Name tag.
           type: list
           default: []
-        filters:
-          description:
-              - A dictionary of filter value pairs.
-              - Available filters are listed here U(http://docs.aws.amazon.com/cli/latest/reference/workspaces/describe-workspaces.html#options).
-          type: dict
-          default: {}
-        include_filters:
-          description:
-              - A list of filters. Any workspaces matching at least one of the filters are included in the result.
-              - Available filters are listed here U(http://docs.aws.amazon.com/cli/latest/reference/workspaces/describe-workspaces.html#options).
-              - Every entry in this list triggers a search query. As such, from a performance point of view, it's better to
-                keep the list as short as possible.
-          type: list
-          default: []
-        exclude_filters:
-          description:
-              - A list of filters. Any workspaces matching one of the filters are excluded from the result.
-              - The filters from C(exclude_filters) take priority over the C(include_filters) and C(filters) keys
-              - Available filters are listed here U(http://docs.aws.amazon.com/cli/latest/reference/workspaces/describe-workspaces.html#options).
-              - Every entry in this list triggers a search query. As such, from a performance point of view, it's better to
-                keep the list as short as possible.
-          type: list
-          default: []
         include_extra_api_calls:
           description:
-              - Add two additional API calls for every workspace to include 'persistent' and 'events' host variables.
-              - Spot workspaces may be persistent and workspaces may have associated events.
+              - Add additional API call for every workspace to include tags.
           type: bool
           default: False
         strict_permissions:
@@ -119,25 +104,9 @@ regions:
   - us-east-1
   - us-east-2
 filters:
-  # All workspaces with their `Environment` tag set to `dev`
-  tag:Environment: dev
-  # All dev and QA hosts
-  tag:Environment:
-    - dev
-    - qa
-  workspace.group-id: sg-xxxxxxxx
+  directory_id: "d-1234567890"
 # Ignores 403 errors rather than failing
 strict_permissions: False
-# Note: I(hostnames) sets the inventory_hostname. To modify ansible_host without modifying
-# inventory_hostname use compose (see example below).
-hostnames:
-  - tag:Name=Tag1,Name=Tag2  # Return specific hosts only
-  - tag:CustomDNSName
-  - dns-name
-  - name: 'tag:Name=Tag1,Name=Tag2'
-  - name: 'private-ip-address'
-    separator: '_'
-    prefix: 'tag:Name'
 
 # Example using constructed features to create groups and set ansible_host
 plugin: az_workspaces
@@ -147,64 +116,32 @@ regions:
 # keyed_groups may be used to create custom groups
 strict: False
 keyed_groups:
-  # Add e.g. x86_64 hosts to an arch_x86_64 group
-  - prefix: arch
-    key: 'architecture'
-  # Add hosts to tag_Name_Value groups for each Name/Value tag pair
-  - prefix: tag
-    key: tags
-  # Add hosts to e.g. workspace_type_z3_tiny
-  - prefix: workspace_type
-    key: workspace_type
-  # Create security_groups_sg_abcd1234 group for each SG
-  - key: 'security_groups|json_query("[].group_id")'
-    prefix: 'security_groups'
-  # Create a group for each value of the Application tag
-  - key: tags.Application
-    separator: ''
-  # Create a group per region e.g. aws_region_us_east_2
-  - key: placement.region
-    prefix: aws_region
-  # Create a group (or groups) based on the value of a custom tag "Role" and add them to a metagroup called "project"
-  - key: tags['Role']
-    prefix: foo
-    parent_group: "project"
+  # add hosts to group by username, to allow easily running ansible against a single workstation
+  - key: user_name
+    prefix: ws_user
+    separator: "_"
+  # group by Workspace status (e.g. to turn on STOPPED workspaces, fix UNHEALTHY, or only run against AVAILABLE)
+  - key: state
+    prefix: ws_state
+    separator: "_"
+  # group by workspace ID
+  - key: workspace_id
+    prefix: ws_id
+    separator: "_"
 # Set individual variables with compose
 compose:
   # Use the private IP address to connect to the host
   # (note: this does not modify inventory_hostname, which is set via I(hostnames))
-  ansible_host: private_ip_address
+  ansible_host: ip_address
 
-# Example using include_filters and exclude_filters to compose the inventory.
-plugin: az_workspaces
-regions:
-  - us-east-1
-  - us-west-1
-include_filters:
-- tag:Name:
-  - 'my_second_tag'
-- tag:Name:
-  - 'my_third_tag'
-exclude_filters:
-- tag:Name:
-  - 'my_first_tag'
-
-# Example using groups to assign the running hosts to a group based on vpc_id
+# Assign Windows hosts to "windows_workspaces" group
 plugin: az_workspaces
 boto_profile: aws_profile
 # Populate inventory with workspaces in these regions
 regions:
   - us-east-2
-filters:
-  # All workspaces with their state as `running`
-  workspace-state-name: running
-keyed_groups:
-  - prefix: tag
-    key: tags
-compose:
-  ansible_host: public_dns_name
 groups:
-  libvpc: vpc_id == 'vpc-####'
+  windows_workspaces: "'WINDOWS' in image_info.operating_system.type"
 '''
 
 import re
@@ -488,19 +425,6 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
         for connection, region in self._boto3_conn(regions):
             try:
-                # By default find non-terminated/terminating items
-                # if not any(f['Name'] == 'workspace-state-name' for f in filters):
-                #     filters.append({'Name': 'workspace-state-name', 'Values': ['running', 'pending', 'stopping', 'stopped']})
-                # breakpoint()
-                # results = (
-                #    connection.get_paginator('list_functions')
-                #    .paginate()
-                #    .build_full_result()
-                # )
-
-                # for result in results['Functions']:
-                #   print(result['FunctionName'])
-
                 paginator = connection.get_paginator(api_call)
                 item_data = paginator.paginate().build_full_result()
 
@@ -515,8 +439,6 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
             except botocore.exceptions.BotoCoreError as e:
                 raise AnsibleError("Failed to describe items: %s" % to_native(e))
 
-            # breakpoint()
-
             all_items.extend(items)
 
         return all_items
@@ -529,10 +451,9 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
 ####
 
-    def _get_workspaces_by_region(self, regions, filters, strict_permissions):
+    def _get_workspaces_by_region(self, regions, strict_permissions):
         '''
            :param regions: a list of regions in which to describe workspaces
-           :param filters: a list of boto3 filter dictionaries
            :param strict_permissions: a boolean determining whether to fail or ignore 403 error codes
            :return A list of workspace dictionaries
         '''
@@ -540,28 +461,13 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
         for connection, region in self._boto3_conn(regions):
             try:
-                # By default find non-terminated/terminating workspaces
-                # if not any(f['Name'] == 'workspace-state-name' for f in filters):
-                #     filters.append({'Name': 'workspace-state-name', 'Values': ['running', 'pending', 'stopping', 'stopped']})
-                # breakpoint()
-                # results = (
-                #    connection.get_paginator('list_functions')
-                #    .paginate()
-                #    .build_full_result()
-                # )
-
-                # for result in results['Functions']:
-                #   print(result['FunctionName'])
-
-                # breakpoint()
                 paginator = connection.get_paginator('describe_workspaces')
                 if self.get_option('filters').get('directory_id'):
                   ws_data = paginator.paginate(DirectoryId=self.get_option('filters')['directory_id']).build_full_result()
                 elif self.get_option('filters').get('bundle_id'):
                   ws_data = paginator.paginate(BundleId=self.get_option('filters')['bundle_id']).build_full_result()
                 else:  # no filter
-                    return [{}]
-
+                  ws_data = paginator.paginate().build_full_result()
 
                 bundle_info = self._get_bundles_by_region(regions, strict_permissions)
                 image_info = self._get_images_by_region(regions, strict_permissions)
@@ -622,51 +528,31 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 if tag_value:
                     return to_text(tag_value)
         return None
-    ## UNUSED ##
+    ## TODO ##
 
     def _get_hostname(self, workspace):
         '''
-            :param workspace: an workspace dict returned by boto3 workspaces describe_workspaces()
+            :param workspace: a workspace dict returned by boto3 workspaces describe_workspaces()
             :return the preferred identifer for the host
         '''
         ## TODO: implement tag-based hostname
         hostname = workspace['ComputerName'].lower()
         return to_text(hostname)
 
-    def _query(self, regions, include_filters, exclude_filters, strict_permissions):
+    def _query(self, regions, strict_permissions):
         '''
             :param regions: a list of regions to query
-            :param include_filters: a list of boto3 filter dictionaries
-            :param exclude_filters: a list of boto3 filter dictionaries
             :param strict_permissions: a boolean determining whether to fail or ignore 403 error codes
 
         '''
         workspaces = []
         ids_to_ignore = []
-        for filter in exclude_filters:
-            for i in self._get_workspaces_by_region(
-                    regions,
-                    ansible_dict_to_boto3_filter_list(filter),
-                    strict_permissions):
-                ids_to_ignore.append(i['WorkspaceId'])
-        for filter in include_filters:
-            for i in self._get_workspaces_by_region(
-                    regions,
-                    ansible_dict_to_boto3_filter_list(filter),
-                    strict_permissions):
-                if i['WorkspaceId'] not in ids_to_ignore:
-                    workspaces.append(i)
-                    ids_to_ignore.append(i['WorkspaceId'])
+        for i in self._get_workspaces_by_region(regions, strict_permissions):
+          if i['WorkspaceId'] not in ids_to_ignore:
+              workspaces.append(i)
+              ids_to_ignore.append(i['WorkspaceId'])
 
-        # breakpoint()
-        workspaces = sorted(workspaces, key=lambda x: x['WorkspaceId'])
-        # breakpoint()
-        # for workspace in workspaces:
-        #   bundle = next((item for item in bundles if item["BundleId"] == workspace["BundleId"]), None)
-        #   workspaces[]
-        # set(sub['ImageId'] for sub in bundles)
-        # bundles = set(sub['BundleId'] for sub in workspaces)
-
+        workspaces = sorted(workspaces, key=lambda x: x['UserName'])
         return {'az_workspaces': workspaces}
 
     def _populate(self, groups, hostnames):
@@ -790,8 +676,6 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         regions = self.get_option('regions')
         if not self.get_option('filters'):
           self.set_option('filters', {})
-        include_filters = [{}]
-        exclude_filters = self.get_option('exclude_filters')
         hostnames = self.get_option('hostnames')
         strict_permissions = self.get_option('strict_permissions')
 
@@ -811,7 +695,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 cache_needs_update = True
 
         if not cache or cache_needs_update:
-            results = self._query(regions, include_filters, exclude_filters, strict_permissions)
+            results = self._query(regions, strict_permissions)
 
         self._populate(results, hostnames)
 
