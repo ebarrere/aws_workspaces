@@ -506,9 +506,6 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
                 items = []
                 new_items = next(iter(item_data.values()))
-                for item in new_items:
-                    if self.get_option('include_extra_api_calls'):
-                        item.update(self._get_event_set_and_persistence(connection, item['WorkspaceId'], item.get('SpotWorkspaceRequestId')))
                 items.extend(new_items)
             except botocore.exceptions.ClientError as e:
                 if e.response['ResponseMetadata']['HTTPStatusCode'] == 403 and not strict_permissions:
@@ -572,6 +569,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 workspaces = []
                 new_workspaces = ws_data['Workspaces']
                 for workspace in new_workspaces:
+                  workspace['UserName'] = workspace['UserName'].lower()
                   for bundle in bundle_info:
                     if bundle['BundleId'] == workspace['BundleId']:
                       workspace.update({'BundleInfo': bundle })
@@ -579,16 +577,8 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                         if image['ImageId'] == bundle['ImageId']:
                           workspace.update({'ImageInfo': image })
 
-                  # pp(workspace['BundleInfo'])
-                    # if workspace['BundleInfo'] is None:
-                    #   next
-                   # next((sub for sub in bundle_info if sub['BundleId'] == workspace['BundleId']), None),
-                   #                  'ImageInfo': next((sub for sub in image_info if sub['BundleId'] == workspace['BundleId']), None)
-                   #                  }
-                   #                )
                   if self.get_option('include_extra_api_calls'):
-                    workspace.update(self._get_connection_status())
-                  # breakpoint()
+                    workspace.update(self._get_tag_details(connection, workspace['WorkspaceId']))
                 workspaces.extend(new_workspaces)
             except botocore.exceptions.ClientError as e:
                 if e.response['ResponseMetadata']['HTTPStatusCode'] == 403 and not strict_permissions:
@@ -602,7 +592,19 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
         return all_workspaces
 
-    ## UNUSED ##
+    def _get_tag_details(self, connection, workspace_id):
+      tags = {}
+      try:
+          kwargs = {'ResourceId': workspace_id}
+          tags['Tags'] = connection.describe_tags(**kwargs)['TagList']
+      except (botocore.exceptions.ClientError, botocore.exceptions.BotoCoreError) as e:
+          if not self.get_option('strict_permissions'):
+              pass
+          else:
+              raise AnsibleError("Failed to describe workspace status: %s" % to_native(e))
+      return tags
+
+    ## TODO ##
     def _get_tag_hostname(self, preference, workspace):
         tag_hostnames = preference.split('tag:', 1)[1]
         if ',' in tag_hostnames:
