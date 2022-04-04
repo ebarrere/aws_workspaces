@@ -54,6 +54,16 @@ DOCUMENTATION = '''
               - To use tags as hostnames use the syntax tag:Name=Value to use the hostname Name_Value, or tag:Name to use the value of the Name tag.
           type: list
           default: []
+        directory_id:
+          description:
+              - API filter for Directory ID
+          type: string
+          default: ""
+        bundle_id:
+          description:
+              - API filter for Bundle ID
+          type: string
+          default: ""
         include_extra_api_calls:
           description:
               - Add additional API call for every workspace to include tags.
@@ -462,10 +472,10 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         for connection, region in self._boto3_conn(regions):
             try:
                 paginator = connection.get_paginator('describe_workspaces')
-                if self.get_option('filters').get('directory_id'):
-                  ws_data = paginator.paginate(DirectoryId=self.get_option('filters')['directory_id']).build_full_result()
-                elif self.get_option('filters').get('bundle_id'):
-                  ws_data = paginator.paginate(BundleId=self.get_option('filters')['bundle_id']).build_full_result()
+                if self.get_option('directory_id'):
+                  ws_data = paginator.paginate(DirectoryId=self.get_option('directory_id')).build_full_result()
+                elif self.get_option('bundle_id'):
+                  ws_data = paginator.paginate(BundleId=self.get_option('bundle_id')).build_full_result()
                 else:  # no filter
                   ws_data = paginator.paginate().build_full_result()
 
@@ -536,7 +546,12 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
             :return the preferred identifer for the host
         '''
         ## TODO: implement tag-based hostname
-        hostname = workspace['ComputerName'].lower()
+        if workspace.get('ComputerName') is not None:
+          hostname = workspace.get('ComputerName').lower()
+        elif workspace.get('IpAddress') is not None:
+          hostname = workspace.get('IpAddress')
+        else:
+          hostname = workspace.get('WorkspaceId').lower()
         return to_text(hostname)
 
     def _query(self, regions, strict_permissions):
@@ -658,6 +673,14 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
     #     else:  # no filter
     #         return [{}]
 
+    def build_include_filters(self):
+        if self.get_option('filters'):
+            return [self.get_option('filters')] + self.get_option('include_filters')
+        elif self.get_option('include_filters'):
+            return self.get_option('include_filters')
+        else:  # no filter
+            return [{}]
+
     def parse(self, inventory, loader, path, cache=True):
 
         super(InventoryModule, self).parse(inventory, loader, path)
@@ -676,6 +699,8 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         regions = self.get_option('regions')
         if not self.get_option('filters'):
           self.set_option('filters', {})
+        # include_filters = self.build_include_filters()
+        # exclude_filters = self.get_option('exclude_filters')
         hostnames = self.get_option('hostnames')
         strict_permissions = self.get_option('strict_permissions')
 
