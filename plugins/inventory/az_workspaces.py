@@ -69,6 +69,11 @@ DOCUMENTATION = '''
               - Add additional API call for every workspace to include tags.
           type: bool
           default: False
+        cache_only:
+          description:
+              - NO API calls — use cache exclusively
+          type: bool
+          default: True
         strict_permissions:
           description:
               - By default if a 403 (Forbidden) error code is encountered this plugin will fail.
@@ -461,10 +466,11 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
 ####
 
-    def _get_workspaces_by_region(self, regions, strict_permissions):
+    def _get_workspaces_by_region(self, regions, strict_permissions, minimal = False):
         '''
            :param regions: a list of regions in which to describe workspaces
            :param strict_permissions: a boolean determining whether to fail or ignore 403 error codes
+           :param minimal: only run necessary API calls
            :return A list of workspace dictionaries
         '''
         all_workspaces = []
@@ -479,21 +485,24 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 else:  # no filter
                   ws_data = paginator.paginate().build_full_result()
 
-                bundle_info = self._get_bundles_by_region(regions, strict_permissions)
-                image_info = self._get_images_by_region(regions, strict_permissions)
+                if not minimal:
+                  bundle_info = self._get_bundles_by_region(regions, strict_permissions)
+                  image_info = self._get_images_by_region(regions, strict_permissions)
 
                 workspaces = []
                 new_workspaces = ws_data['Workspaces']
                 for workspace in new_workspaces:
                   workspace['UserName'] = workspace['UserName'].lower()
-                  for bundle in bundle_info:
-                    if bundle['BundleId'] == workspace['BundleId']:
-                      workspace.update({'BundleInfo': bundle })
-                      for image in image_info:
-                        if image['ImageId'] == bundle['ImageId']:
-                          workspace.update({'ImageInfo': image })
 
-                  if self.get_option('include_extra_api_calls'):
+                  if not minimal:
+                    for bundle in bundle_info:
+                      if bundle['BundleId'] == workspace['BundleId']:
+                        workspace.update({'BundleInfo': bundle })
+                        for image in image_info:
+                          if image['ImageId'] == bundle['ImageId']:
+                            workspace.update({'ImageInfo': image })
+
+                  if not minimal and self.get_option('include_extra_api_calls'):
                     workspace.update(self._get_tag_details(connection, workspace['WorkspaceId']))
                 workspaces.extend(new_workspaces)
             except botocore.exceptions.ClientError as e:
@@ -554,15 +563,32 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
           hostname = workspace.get('WorkspaceId').lower()
         return to_text(hostname)
 
-    def _query(self, regions, strict_permissions):
+    def _merge_dictionaries(self, dict1, dict2):
+        '''
+        Recursively merge dictionaries.
+        :param dict1: Base dictionary to merge.
+        :param dict2: Dictionary to merge on top of base dictionary.
+        :return: Merged dictionary
+        '''
+        for key, val in dict1.items():
+            if isinstance(val, dict):
+                dict2_node = dict2.setdefault(key, {})
+                self._merge_dictionaries(val, dict2_node)
+            else:
+                if key not in dict2:
+                    dict2[key] = val
+        return dict2
+
+    def _query(self, regions, strict_permissions, minimal = False):
         '''
             :param regions: a list of regions to query
             :param strict_permissions: a boolean determining whether to fail or ignore 403 error codes
+            :param minimal: only run necessary API calls
 
         '''
         workspaces = []
         ids_to_ignore = []
-        for i in self._get_workspaces_by_region(regions, strict_permissions):
+        for i in self._get_workspaces_by_region(regions, strict_permissions, minimal):
           if i['WorkspaceId'] not in ids_to_ignore:
               workspaces.append(i)
               ids_to_ignore.append(i['WorkspaceId'])
@@ -720,7 +746,12 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 cache_needs_update = True
 
         if not cache or cache_needs_update:
-            results = self._query(regions, strict_permissions)
+          results = self._query(regions, strict_permissions)
+        elif not self.get_option('cache_only'):
+          new_results = self._query(regions, strict_permissions, True)
+
+          for i, result in enumerate(results['az_workspaces']):
+            results['az_workspaces'][i] = self._merge_dictionaries(result,new_results['az_workspaces'][i])
 
         self._populate(results, hostnames)
 
